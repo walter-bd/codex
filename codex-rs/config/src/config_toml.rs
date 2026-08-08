@@ -152,6 +152,8 @@ pub struct ConfigToml {
     pub model: Option<String>,
     /// Review model override used by the `/review` feature.
     pub review_model: Option<String>,
+    /// Model override used specifically for history compaction turns.
+    pub compact_model: Option<String>,
 
     /// Provider to use from the model_providers map.
     pub model_provider: Option<String>,

@@ -43,6 +43,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TruncationPolicy;
 use codex_protocol::protocol::TurnStartedEvent;
+use codex_protocol::protocol::WarningEvent;
 use codex_rollout_trace::CompactionCheckpointTracePayload;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_utils_output_truncation::approx_token_count;
@@ -131,6 +132,7 @@ async fn run_remote_compact_task_inner(
     initial_context_injection: InitialContextInjection,
     compaction_metadata: CompactionTurnMetadata,
 ) -> CodexResult<()> {
+    let step_context = &crate::compact::apply_compact_model_override(sess, step_context).await;
     let turn_context = &step_context.turn;
     let trigger = compaction_metadata.trigger();
     let reason = compaction_metadata.reason();
@@ -268,6 +270,15 @@ async fn run_remote_compact_task_inner_impl(
                 compaction_metadata.implementation(),
                 fallback_result.as_ref().err(),
             );
+            if fallback_result.is_ok() {
+                let warning = EventMsg::Warning(WarningEvent {
+                    message: format!(
+                        "Compaction with model `{}` failed; fell back to `{}`.",
+                        turn_context.model_info.slug, fallback_turn_context.model_info.slug
+                    ),
+                });
+                sess.send_event(turn_context, warning).await;
+            }
             match fallback_result {
                 Ok(attempt) => (attempt, fallback_turn_context),
                 Err(_) => return Err(error),

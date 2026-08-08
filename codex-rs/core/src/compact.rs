@@ -105,6 +105,35 @@ pub(crate) async fn build_compaction_initial_context(
     }
 }
 
+/// If `compact_model` is configured and differs from the active turn's model, return a
+/// `StepContext` whose turn runs on that model; otherwise return the original unchanged.
+pub(crate) async fn apply_compact_model_override(
+    sess: &Session,
+    step_context: &Arc<StepContext>,
+) -> Arc<StepContext> {
+    let Some(model) = step_context.turn.config.compact_model.clone() else {
+        return Arc::clone(step_context);
+    };
+    if model == step_context.turn.model_info.slug {
+        return Arc::clone(step_context);
+    }
+    let turn = Arc::new(
+        step_context
+            .turn
+            .with_model(model, &sess.services.models_manager)
+            .await,
+    );
+    Arc::new(StepContext {
+        turn,
+        environments: step_context.environments.clone(),
+        selected_capability_roots: step_context.selected_capability_roots.clone(),
+        executor_capability_discovery: step_context.executor_capability_discovery.clone(),
+        mcp: Arc::clone(&step_context.mcp),
+        tool_router: Arc::clone(&step_context.tool_router),
+        loaded_agents_md: step_context.loaded_agents_md.clone(),
+    })
+}
+
 pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
     provider.supports_remote_compaction()
 }
@@ -245,6 +274,17 @@ async fn run_compact_task_inner_impl(
     initial_context_injection: InitialContextInjection,
     compaction_metadata: CompactionTurnMetadata,
 ) -> CodexResult<String> {
+    // Compaction can run on a different (cheaper/faster) model than the turn that
+    // triggered it, if the user configured `compact_model`.
+    let turn_context = match turn_context.config.compact_model.clone() {
+        Some(model) if model != turn_context.model_info.slug => Arc::new(
+            turn_context
+                .with_model(model, &sess.services.models_manager)
+                .await,
+        ),
+        _ => turn_context,
+    };
+
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
